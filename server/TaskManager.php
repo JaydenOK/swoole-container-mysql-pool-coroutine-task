@@ -5,70 +5,30 @@ namespace module\server;
 use chan;
 use Exception;
 use InvalidArgumentException;
-use module\lib\PdoPoolClient;
 use module\task\TaskFactory;
-use PDO;
 use Swoole\Coroutine;
 use Swoole\Database\PDOPool;
-use Swoole\Database\PDOProxy;
 use Swoole\Http\Request;
 use Swoole\Http\Response;
 use Swoole\Process;
-use Swoole\Server;
 use Swoole\Table;
-use Swoole\Timer;
 
 class TaskManager
 {
-    const EVENT_START = 'start';
-    const EVENT_MANAGER_START = 'managerStart';
-    const EVENT_WORKER_START = 'workerStart';
-    const EVENT_WORKER_STOP = 'workerStop';
-    const EVENT_REQUEST = 'request';
 
-    /**
-     * @var \Swoole\Http\Server
-     */
-    protected $httpServer;
     /**
      * @var string
      */
     private $taskType;
     /**
-     * @var int|string
-     */
-    private $port;
-    private $processPrefix = 'co-task-';
-    private $setting = ['worker_num' => 2, 'enable_coroutine' => true];
-    /**
-     * @var bool
-     */
-    private $daemon;
-    /**
      * @var string
      */
     private $pidFile;
-    /**
-     * @var int
-     */
-    private $poolSize = 16;
     /**
      * 是否使用连接池，可参数指定，默认不使用
      * @var bool
      */
     private $isUsePool = false;
-    /**
-     * @var PDOPool
-     */
-    private $pool;
-    private $checkAvailableTime = 1;
-    private $checkLiveTime = 10;
-    private $availableTimerId;
-    private $liveTimerId;
-    /**
-     * @var Table
-     */
-    private $poolTable;
     /**
      * @var int
      */
