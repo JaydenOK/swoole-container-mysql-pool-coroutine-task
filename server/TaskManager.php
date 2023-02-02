@@ -72,20 +72,25 @@ class TaskManager
     /**
      * @var int
      */
-    private $concurrency;
+    private $concurrencyNum;
     /**
      * @var int
      */
     private $maxTaskNum;
+    /**
+     * @var int|null
+     */
+    private $id;
 
     public function run($argv)
     {
         try {
             $this->taskType = isset($argv[1]) ? (string)$argv[1] : '';
-            $this->concurrency = isset($argv[2]) ? (int)$argv[2] : 2;
+            $this->concurrencyNum = isset($argv[2]) ? (int)$argv[2] : 1;
             $this->maxTaskNum = isset($argv[3]) ? (int)$argv[3] : 50;
-            if (empty($this->taskType)) {
-                throw new InvalidArgumentException('task_type error');
+            $this->id = isset($argv[4]) ? (int)$argv[4] : null;
+            if (empty($this->taskType) || $this->concurrencyNum < 1 || $this->maxTaskNum < 1) {
+                throw new InvalidArgumentException('params error');
             }
             $this->pidFile = $this->taskType . '.pid';
             if (!in_array($this->taskType, TaskFactory::taskList())) {
@@ -105,71 +110,41 @@ class TaskManager
         //所有的协程必须在协程容器里面创建，Swoole 程序启动的时候大部分情况会自动创建协程容器，其他直接裸写协程的方式启动程序，需要先创建一个协程容器 (Coroutine\run() 函数
         \Swoole\Coroutine::set(['hook_flags' => SWOOLE_HOOK_ALL]); //不包括CURL， v4.4+版本使用此方法。从 v4.5.4 版本起，`SWOOLE_HOOK_ALL` 包括 `SWOOLE_HOOK_CURL`
         \Swoole\Coroutine\Run(function () {
-            $total = isset($params['limit']) && !empty($params['total']) ? (int)$params['total'] : 100;
-            $id = isset($params['id']) && !empty($params['id']) ? $params['id'] : '';
-            $dbServerKey = 'db_server_yibai_master';
-            $key = 'db_account_manage';
-            $db = createDbConnection($dbServerKey, $key);
-            //查询出要处理的记录
-            $lists = $db->where('id<', 1000)->limit($total)->get('yibai_amazon_account')->result_array();
+            $taskModel = TaskFactory::factory($this->taskType);
+            $lists = $taskModel->getTaskList(['limit' => $this->maxTaskNum, 'id' => $this->id]);
             if (empty($lists)) {
                 return 'not task wait';
             }
             echo date('[Y-m-d H:i:s]') . 'total:' . count($lists) . print_r(array_column($lists, 'id'), true) . PHP_EOL;
-            $batchRunNum = 10;
-            $batchAccountList = array_chunk($lists, $batchRunNum);
-            foreach ($batchAccountList as $key => $accountList) {
-                $result = [];
-                //分批次执行
-                $wg = new Swoole\Coroutine\WaitGroup();
-                foreach ($accountList as $account) {
-                    echo date('[Y-m-d H:i:s]') . "id: {$account['id']},running" . PHP_EOL;
-                    // 增加计数
-                    $wg->add();
-                    //父子协程优先级
-                    //优先执行子协程 (即 go() 里面的逻辑)，直到发生协程 yield(co::sleep 处)，然后协程调度到外层协程
-                    go(function () use ($wg, &$result, $account) {
-                        //启动一个协程客户端client
-                        $cli = new Swoole\Coroutine\Http\Client('api.amazon.com', 443, true);
-                        $cli->setHeaders([
-                            'Host' => 'api.amazon.com',
-                            'User-Agent' => 'Chrome/49.0.2587.3',
-                            'Accept' => 'text/html,application/xhtml+xml,application/xml',
-                            'Accept-Encoding' => 'gzip',
-                        ]);
-                        $cli->set(['timeout' => 1]);
-                        $cli->setMethod('POST');
-                        $cli->get('/auth/o2/token');
-                        $result[] = $cli->body;
-                        $cli->close();
-                        //完成减少计数
-                        $wg->done();
-                    });
-                }
-                // 主协程等待，挂起当前协程，等待所有任务完成后恢复当前协程的执行
-                $wg->wait();
-                foreach ($result as $item) {
-                    $id = $item['id'];
-                    echo date('[Y-m-d H:i:s]') . "id: {$id} done,result:" . json_encode($item, 256) . PHP_EOL;
-                }
+            //有限通道channel阻塞，控制并发数
+            $chan = new Coroutine\Channel($this->concurrencyNum);
+            //协程依赖同步等待
+            $wg = new \Swoole\Coroutine\WaitGroup();
+            $wg->add(count($lists));
+            foreach ($lists as $task) {
+                //阻塞
+                $chan->push(1);
+                $this->logMessage('task running');
+                go(function () use ($wg, $chan, $task) {
+                    try {
+                        $taskModel = TaskFactory::factory($this->taskType);
+                        $result = $taskModel->taskRun($task);
+                        $this->logMessage('taskDone' . $result);
+                        $taskModel = null;
+                    } catch (Exception $e) {
+                        $e->getMessage();
+                        $this->logMessage('taskRun Exception:' . $e->getMessage());
+                    }
+                    //完成减少计数，解除阻塞
+                    $wg->done();
+                    $chan->pop();
+                });
             }
+            // 主协程等待，挂起当前协程，等待所有任务完成后恢复当前协程的执行
+            $wg->wait();
+            $this->logMessage('all task done:' . $this->taskType);
         });
-        return 'finish';
-    }
-
-    /**
-     * 当前进程重命名
-     * @param $processName
-     * @return bool|mixed
-     */
-    private function renameProcessName($processName)
-    {
-        if (function_exists('cli_set_process_title')) {
-            return cli_set_process_title($processName);
-        } else if (function_exists('swoole_set_process_name')) {
-            return swoole_set_process_name($processName);
-        }
-        return false;
+        $this->logMessage('done');
     }
 
     public function onRequest(Request $request, Response $response)

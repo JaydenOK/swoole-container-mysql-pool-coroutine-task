@@ -8,7 +8,5 @@ interface Task
 
     public function getTaskList($params);
 
-    public function taskRun($id, $task);
-
-    public function taskDone($id, $data);
+    public function taskRun($task);
 }

@@ -28,23 +28,14 @@ abstract class TaskModel implements Task
      */
     public function __construct($poolObject = null)
     {
-        if ($poolObject !== null) {
-            $this->isUsePool = true;
-            $this->poolObject = $poolObject;
-        } else {
-            $this->mysqliClient = new MysqliClient();
-            $this->query = $this->mysqliClient->getQuery();
-        }
+        $this->mysqliClient = new MysqliClient();
+        $this->query = $this->mysqliClient->getQuery();
     }
 
     //关闭mysql短连接
     public function __destruct()
     {
-        if ($this->isUsePool) {
-            $this->poolObject = null;
-        } else {
-            $this->query->disconnect();
-        }
+        $this->query->disconnect();
         $this->query = null;
         $this->mysqliClient = null;
     }
