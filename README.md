@@ -1,5 +1,5 @@
-## swoole-coroutine-mysql-pdo-pool-task
-Coroutine协程容器并发实例，适用于内部系统要处理大量耗时的任务，直接命令行执行，每个协程单独mysql连接
+## swoole-coroutine-mysql-pool-task
+Coroutine协程容器并发实例，多类型多任务，适用于内部系统要处理大量耗时的任务
 
 
 #### 功能逻辑
