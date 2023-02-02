@@ -41,6 +41,9 @@ class TaskFactory
             case self::TASK_SHOPEE:
                 $task = new ShopeeModel($pdo);
                 break;
+            case self::TASK_EBAY:
+                $task = new Ebay($pdo);
+                break;
             default:
                 break;
         }

@@ -1,17 +1,15 @@
 <?php
+/**
+ * Coroutine协程容器并发实例，适用于内部系统要处理大量耗时的任务，直接命令行执行，每个协程单独mysql连接
+ */
 
 namespace module\server;
 
-use chan;
 use Exception;
 use InvalidArgumentException;
 use module\task\TaskFactory;
 use Swoole\Coroutine;
-use Swoole\Database\PDOPool;
-use Swoole\Http\Request;
-use Swoole\Http\Response;
 use Swoole\Process;
-use Swoole\Table;
 
 class TaskManager
 {
@@ -24,11 +22,6 @@ class TaskManager
      * @var string
      */
     private $pidFile;
-    /**
-     * 是否使用连接池，可参数指定，默认不使用
-     * @var bool
-     */
-    private $isUsePool = false;
     /**
      * @var int
      */
@@ -65,6 +58,7 @@ class TaskManager
     //命令行协程执行，控制并发
     private function runTask()
     {
+        $startTime = time();
         //一键协程化，被`Hook`的函数需要在[协程容器]中使用
         //Swoole\Runtime::enableCoroutine(SWOOLE_HOOK_ALL);
         //所有的协程必须在协程容器里面创建，Swoole 程序启动的时候大部分情况会自动创建协程容器，其他直接裸写协程的方式启动程序，需要先创建一个协程容器 (Coroutine\run() 函数
@@ -75,26 +69,28 @@ class TaskManager
             if (empty($lists)) {
                 return 'not task wait';
             }
-            echo date('[Y-m-d H:i:s]') . 'total:' . count($lists) . print_r(array_column($lists, 'id'), true) . PHP_EOL;
+            $count = count($lists);
+            $this->logMessage('total task num:' . $count);
             //有限通道channel阻塞，控制并发数
             $chan = new Coroutine\Channel($this->concurrencyNum);
             //协程依赖同步等待
             $wg = new \Swoole\Coroutine\WaitGroup();
-            $wg->add(count($lists));
+            $wg->add($count);
             foreach ($lists as $task) {
                 //阻塞
                 $chan->push(1);
-                $this->logMessage('task running');
+                $this->logMessage('push task');
                 go(function () use ($wg, $chan, $task) {
                     try {
+                        //每个协程，独立连接，可改用连接池
                         $taskModel = TaskFactory::factory($this->taskType);
                         $result = $taskModel->taskRun($task);
-                        $this->logMessage('taskDone' . $result);
-                        $taskModel = null;
+                        $this->logMessage('taskDone:' . $result);
                     } catch (Exception $e) {
                         $e->getMessage();
                         $this->logMessage('taskRun Exception:' . $e->getMessage());
                     }
+                    $taskModel = null;
                     //完成减少计数，解除阻塞
                     $wg->done();
                     $chan->pop();
@@ -102,103 +98,9 @@ class TaskManager
             }
             // 主协程等待，挂起当前协程，等待所有任务完成后恢复当前协程的执行
             $wg->wait();
-            $this->logMessage('all task done:' . $this->taskType);
+            $this->logMessage("all {$this->taskType} taskDone: {$count}");
         });
-        $this->logMessage('done');
-    }
-
-    public function onRequest(Request $request, Response $response)
-    {
-        try {
-            $concurrency = isset($request->get['concurrency']) ? (int)$request->get['concurrency'] : 5;  //并发数
-            $total = isset($request->get['total']) ? (int)$request->get['total'] : 100;  //需总处理记录数
-            $taskType = isset($request->get['task_type']) ? (string)$request->get['task_type'] : '';  //任务类型
-            if ($concurrency <= 0 || empty($taskType)) {
-                throw new InvalidArgumentException('parameters error');
-            }
-            //数据库配置信息
-            $pdo = $this->isUsePool ? $this->getPoolObject() : null;
-            $mainTaskModel = TaskFactory::factory($taskType, $pdo);
-            $taskList = $mainTaskModel->getTaskList(['limit' => $total]);       //已一键协程化，多个请求时，此处不阻塞
-            if (empty($taskList)) {
-                throw new InvalidArgumentException('no tasks waiting to be executed');
-            }
-            $taskCount = count($taskList);
-            $startTime = time();
-            $this->logMessage("task count:{$taskCount}");
-            $taskChan = new chan($taskCount);
-            //初始化并发数量
-            $producerChan = new chan($concurrency);
-            $dataChan = new chan($total);
-            for ($size = 1; $size <= $concurrency; $size++) {
-                $producerChan->push(1);
-            }
-            foreach ($taskList as $task) {
-                //增加当前任务类型标识
-                $task = array_merge($task, ['task_type' => $taskType]);
-                $taskChan->push($task);
-            }
-            //创建生产者主协程，用于投递任务
-            go(function () use ($taskChan, $producerChan, $dataChan) {
-                while (true) {
-                    $chanStatsArr = $taskChan->stats(); //queue_num 通道中的元素数量
-                    if (!isset($chanStatsArr['queue_num']) || $chanStatsArr['queue_num'] == 0) {
-                        //queue_num 通道中的元素数量
-                        $this->logMessage('finish deliver');
-                        break;
-                    }
-                    //阻塞获取
-                    $producerChan->pop();
-                    $task = $taskChan->pop();
-                    //创建子协程，执行任务，使用channel传递数据
-                    go(function () use ($producerChan, $dataChan, $task) {
-                        try {
-                            //每个协程，创建独立连接（可从连接池获取）
-                            $pdo = $this->isUsePool ? $this->getPoolObject() : null;
-                            $taskModel = TaskFactory::factory($task['task_type'], $pdo);
-                            Coroutine::defer(function () use ($taskModel) {
-                                //释放内存及mysql连接
-                                unset($taskModel);
-                            });
-                            $this->logMessage('taskRun:' . $task['id']);
-                            $responseBody = $taskModel->taskRun($task['id'], $task);
-                            $this->logMessage("taskFinish:{$task['id']}");
-                        } catch (Exception $e) {
-                            $this->logMessage("taskRunException: id:{$task['id']}: msg:" . $e->getMessage());
-                            $responseBody = null;
-                        }
-                        $pushStatus = $dataChan->push(['id' => $task['id'], 'data' => $responseBody]);
-                        if ($pushStatus !== true) {
-                            $this->logMessage('push errCode:' . $dataChan->errCode);
-                        }
-                        //处理完，恢复producerChan协程
-                        $producerChan->push(1);
-                    });
-                }
-            });
-            //消费数据
-            for ($i = 1; $i <= $taskCount; $i++) {
-                //阻塞，等待投递结果, 通道被关闭时，执行失败返回 false,
-                $receiveData = $dataChan->pop();
-                if ($receiveData === false) {
-                    $this->logMessage('channel close, pop errCode:' . $dataChan->errCode);
-                    //退出
-                    break;
-                }
-                $this->logMessage('taskDone:' . $receiveData['id']);
-                $mainTaskModel->taskDone($receiveData['id'], $receiveData['data']);
-            }
-            //返回响应
-            $endTime = time();
-            $return = ['taskCount' => $taskCount, 'concurrency' => $concurrency, 'useTime' => ($endTime - $startTime) . 's'];
-        } catch (InvalidArgumentException $e) {
-            $return = json_encode(['Exception' => $e->getMessage()]);
-        } catch (Exception $e) {
-            $this->logMessage('Exception:' . $e->getMessage());
-            $return = json_encode(['Exception' => $e->getMessage()]);
-        }
-        $mainTaskModel = null;
-        return $response->end(json_encode($return));
+        $this->logMessage('done, use time[s]:' . (time() - $startTime));
     }
 
     private function logMessage($logData)

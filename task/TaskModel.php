@@ -15,12 +15,6 @@ abstract class TaskModel implements Task
      * @var \module\lib\MysqliDb
      */
     protected $query;
-    /**
-     * @var \PDO | \Swoole\Database\PDOProxy | null
-     */
-    protected $poolObject;
-
-    protected $isUsePool = false;
 
     /**
      * TaskModel constructor.
