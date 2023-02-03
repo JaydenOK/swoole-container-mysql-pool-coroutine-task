@@ -90,43 +90,48 @@ class TaskManager
         //Swoole\Runtime::enableCoroutine(SWOOLE_HOOK_ALL);
         //所有的协程必须在协程容器里面创建，Swoole 程序启动的时候大部分情况会自动创建协程容器，其他直接裸写协程的方式启动程序，需要先创建一个协程容器 (Coroutine\run() 函数
         Coroutine::set(['hook_flags' => SWOOLE_HOOK_ALL]); //不包括CURL， v4.4+版本使用此方法。从 v4.5.4 版本起，`SWOOLE_HOOK_ALL` 包括 `SWOOLE_HOOK_CURL`
-        Run(function () {
-            $this->checkPool();
-            $taskModel = TaskFactory::factory($this->taskType, $this->getPoolObject());
-            $taskLists = $taskModel->getTaskList(['limit' => $this->maxTaskNum, 'id' => $this->id]);
-            if (empty($taskLists)) {
-                echo 'not task wait' . PHP_EOL;
+        run(function () {
+            try {
+                $this->checkPool();
+                $taskModel = TaskFactory::factory($this->taskType, $this->getPoolObject());
+                $taskLists = $taskModel->getTaskList(['limit' => $this->maxTaskNum, 'id' => $this->id]);
+                if (empty($taskLists)) {
+                    echo 'not task wait' . PHP_EOL;
+                    return;
+                }
+                $count = count($taskLists);
+                $this->logMessage('total task num:' . $count);
+                //有限通道channel阻塞，控制并发数
+                $chan = new Channel($this->concurrencyNum);
+                //协程依赖同步等待
+                $wg = new WaitGroup();
+                $wg->add($count);
+                foreach ($taskLists as $task) {
+                    //阻塞
+                    $chan->push(1);
+                    $this->logMessage('push task');
+                    go(function () use ($wg, $chan, $task) {
+                        try {
+                            //每个协程，独立连接（可连接池）
+                            $taskModel = TaskFactory::factory($this->taskType, $this->getPoolObject());
+                            $result = $taskModel->taskRun($task);
+                            $this->logMessage('taskDone:' . $result);
+                        } catch (Exception $e) {
+                            $this->logMessage('taskRun Exception:' . $e->getMessage());
+                        }
+                        $taskModel = null;
+                        //完成减少计数，解除阻塞
+                        $wg->done();
+                        $chan->pop();
+                    });
+                }
+                // 主协程等待，挂起当前协程，等待所有任务完成后恢复当前协程的执行
+                $wg->wait();
+                $this->logMessage("all {$this->taskType} taskDone: {$count}");
+            } catch (Exception $e) {
+                echo 'Container Exception:' . $e->getMessage() . PHP_EOL;
                 return;
             }
-            $count = count($taskLists);
-            $this->logMessage('total task num:' . $count);
-            //有限通道channel阻塞，控制并发数
-            $chan = new Channel($this->concurrencyNum);
-            //协程依赖同步等待
-            $wg = new WaitGroup();
-            $wg->add($count);
-            foreach ($taskLists as $task) {
-                //阻塞
-                $chan->push(1);
-                $this->logMessage('push task');
-                go(function () use ($wg, $chan, $task) {
-                    try {
-                        //每个协程，独立连接（可连接池）
-                        $taskModel = TaskFactory::factory($this->taskType, $this->getPoolObject());
-                        $result = $taskModel->taskRun($task);
-                        $this->logMessage('taskDone:' . $result);
-                    } catch (Exception $e) {
-                        $this->logMessage('taskRun Exception:' . $e->getMessage());
-                    }
-                    $taskModel = null;
-                    //完成减少计数，解除阻塞
-                    $wg->done();
-                    $chan->pop();
-                });
-            }
-            // 主协程等待，挂起当前协程，等待所有任务完成后恢复当前协程的执行
-            $wg->wait();
-            $this->logMessage("all {$this->taskType} taskDone: {$count}");
         });
         $this->logMessage('done, use time[s]:' . (time() - $startTime));
     }
