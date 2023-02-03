@@ -94,7 +94,8 @@ class TaskManager
             $taskModel = TaskFactory::factory($this->taskType, $this->getPoolObject());
             $taskLists = $taskModel->getTaskList(['limit' => $this->maxTaskNum, 'id' => $this->id]);
             if (empty($taskLists)) {
-                return 'not task wait';
+                echo 'not task wait' . PHP_EOL;
+                return;
             }
             $count = count($taskLists);
             $this->logMessage('total task num:' . $count);
