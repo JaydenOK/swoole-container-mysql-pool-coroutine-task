@@ -1,6 +1,8 @@
 <?php
 /**
  * Coroutine协程容器并发实例，适用于内部系统要处理大量耗时的任务，直接命令行执行，每个协程单独mysql连接(支持连接池)
+ *
+ * @author https://github.com/JaydenOK
  */
 
 namespace module\server;
