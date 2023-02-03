@@ -27,22 +27,22 @@ class TaskFactory
 
     /**
      * @param $taskType
-     * @param \PDO | \Swoole\Database\PDOProxy | null $pdo 为null则每个任务直接连接mysql，为PDO则使用连接池
+     * @param \PDO | \Swoole\Database\PDOProxy | \Swoole\Database\MysqliProxy | null $poolObject 为null则每个任务直接连接mysql，为PDO则使用连接池
      * @return AmazonModel|ShopeeModel|null
      * @throws \Exception
      */
-    public static function factory($taskType, $pdo = null)
+    public static function factory($taskType, $poolObject = null)
     {
         $task = null;
         switch ($taskType) {
             case self::TASK_AMAZON:
-                $task = new AmazonModel($pdo);
+                $task = new AmazonModel($poolObject);
                 break;
             case self::TASK_SHOPEE:
-                $task = new ShopeeModel($pdo);
+                $task = new ShopeeModel($poolObject);
                 break;
             case self::TASK_EBAY:
-                $task = new Ebay($pdo);
+                $task = new Ebay($poolObject);
                 break;
             default:
                 break;

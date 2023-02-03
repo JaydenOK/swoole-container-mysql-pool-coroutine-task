@@ -1,5 +1,5 @@
-## swoole-coroutine-mysql-pool-task
-Coroutine协程容器并发实例，多类型多任务，适用于内部系统要处理大量耗时的任务
+## swoole-container-mysql-pool-coroutine-task
+swoole协程容器并发实例，多类型多任务，适用于内部系统要处理大量耗时的任务（支持连接池）
 
 
 #### 功能逻辑
@@ -10,6 +10,7 @@ Coroutine协程容器并发实例，多类型多任务，适用于内部系统�
 WaitGroup等待
 多类型，多任务执行
 task目录下Model为每个类型任务模块，增加新模块继承TaskModel（实现了Task接口）即可
+支持连接池
 ```
 
 #### 版本
@@ -21,10 +22,10 @@ task目录下Model为每个类型任务模块，增加新模块继承TaskModel�
 
 ```shell script
 
-示例: [root@ac_web ]# php service.php {taskType} {concurrencyNum} {maxTaskNum}
+示例: [root@ac_web ]# php service.php {taskType} {concurrencyNum} {maxTaskNum} {id} {isUsePool} {poolSize}
 
 
-[root@ac_web ]# php service.php Amazon 20 500
+[root@ac_web ]# [root@ac_web pdo_coroutine_task]# php service.php Amazon 40 300 0 1 50
 
 
 ```

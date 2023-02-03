@@ -2,6 +2,9 @@
 
 namespace module\lib;
 
+use Swoole\Database\MysqliConfig;
+use Swoole\Database\MysqliPool;
+
 class MysqliClient
 {
     /**
@@ -36,6 +39,21 @@ class MysqliClient
             'charset' => $config['charset'],
         ]);
         return $this->query;
+    }
+
+    /**
+     * @param int $poolSize
+     * @return MysqliPool
+     * @throws \Exception
+     */
+    public function initPool($poolSize = 10)
+    {
+        $config = $this->databaseConfig();
+        $pool = new MysqliPool(
+            (new MysqliConfig)->withHost($config['host'])->withUsername($config['user'])->withPassword($config['password'])
+                ->withPort($config['port'])->withDbName($config['dbname'])->withCharset($config['charset']),
+            $poolSize);
+        return $pool;
     }
 
 }
