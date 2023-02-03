@@ -8,13 +8,12 @@ namespace module\server;
 use Exception;
 use InvalidArgumentException;
 use module\lib\MysqliClient;
-use module\lib\PdoClient;
 use module\task\TaskFactory;
 use Swoole\ConnectionPool;
 use Swoole\Coroutine;
-use Swoole\Database\MysqliConfig;
-use Swoole\Database\MysqliPool;
-use Swoole\Process;
+use Swoole\Coroutine\Channel;
+use Swoole\Coroutine\WaitGroup;
+use function Swoole\Coroutine\Run;
 
 class TaskManager
 {
@@ -88,8 +87,8 @@ class TaskManager
         //一键协程化，被`Hook`的函数需要在[协程容器]中使用
         //Swoole\Runtime::enableCoroutine(SWOOLE_HOOK_ALL);
         //所有的协程必须在协程容器里面创建，Swoole 程序启动的时候大部分情况会自动创建协程容器，其他直接裸写协程的方式启动程序，需要先创建一个协程容器 (Coroutine\run() 函数
-        \Swoole\Coroutine::set(['hook_flags' => SWOOLE_HOOK_ALL]); //不包括CURL， v4.4+版本使用此方法。从 v4.5.4 版本起，`SWOOLE_HOOK_ALL` 包括 `SWOOLE_HOOK_CURL`
-        \Swoole\Coroutine\Run(function () {
+        Coroutine::set(['hook_flags' => SWOOLE_HOOK_ALL]); //不包括CURL， v4.4+版本使用此方法。从 v4.5.4 版本起，`SWOOLE_HOOK_ALL` 包括 `SWOOLE_HOOK_CURL`
+        Run(function () {
             $this->checkPool();
             $taskModel = TaskFactory::factory($this->taskType, $this->getPoolObject());
             $taskLists = $taskModel->getTaskList(['limit' => $this->maxTaskNum, 'id' => $this->id]);
@@ -100,9 +99,9 @@ class TaskManager
             $count = count($taskLists);
             $this->logMessage('total task num:' . $count);
             //有限通道channel阻塞，控制并发数
-            $chan = new Coroutine\Channel($this->concurrencyNum);
+            $chan = new Channel($this->concurrencyNum);
             //协程依赖同步等待
-            $wg = new \Swoole\Coroutine\WaitGroup();
+            $wg = new WaitGroup();
             $wg->add($count);
             foreach ($taskLists as $task) {
                 //阻塞
@@ -135,21 +134,6 @@ class TaskManager
         $logFile = MODULE_DIR . '/logs/server-' . date('Y-m') . '.log';
         $logData = (is_array($logData) || is_object($logData)) ? json_encode($logData, JSON_UNESCAPED_UNICODE) : $logData;
         file_put_contents($logFile, date('[Y-m-d H:i:s]') . $logData . PHP_EOL, FILE_APPEND);
-    }
-
-    private function status()
-    {
-        $pidFile = MODULE_DIR . '/logs/' . $this->pidFile;
-        if (!file_exists($pidFile)) {
-            throw new Exception('server not running');
-        }
-        $pid = file_get_contents($pidFile);
-        //$signo=0，可以检测进程是否存在，不会发送信号
-        if (!Process::kill($pid, 0)) {
-            echo 'not running, pid:' . $pid . PHP_EOL;
-        } else {
-            echo 'running, pid:' . $pid . PHP_EOL;
-        }
     }
 
     /**
