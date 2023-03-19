@@ -1,5 +1,5 @@
 ## swoole-container-mysql-pool-coroutine-task
-swoole协程容器并发任务项目，多类型多任务，适用于内部系统要处理大量耗时的任务（支持连接池）
+swoole协程容器并发任务项目（非常驻进程），多类型多任务，适用于内部系统要处理大量耗时的任务（支持连接池）
 ## 
 
 - 另一种实现方案，请前往 [协程并发任务服务项目](https://github.com/JaydenOK/swoole-mysql-pool-coroutine-server-task).
